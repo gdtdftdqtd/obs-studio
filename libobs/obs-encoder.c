@@ -17,10 +17,13 @@
 
 #include "obs.h"
 #include "obs-internal.h"
+#include "util/util_uint64.h"
 
 #define encoder_active(encoder) os_atomic_load_bool(&encoder->active)
 #define set_encoder_active(encoder, val) \
 	os_atomic_set_bool(&encoder->active, val)
+
+#define get_weak(encoder) ((obs_weak_encoder_t *)encoder->context.control)
 
 struct obs_encoder_info *find_encoder(const char *id)
 {
@@ -43,23 +46,17 @@ const char *obs_encoder_get_display_name(const char *id)
 static bool init_encoder(struct obs_encoder *encoder, const char *name,
 			 obs_data_t *settings, obs_data_t *hotkey_data)
 {
-	pthread_mutexattr_t attr;
-
 	pthread_mutex_init_value(&encoder->init_mutex);
 	pthread_mutex_init_value(&encoder->callbacks_mutex);
 	pthread_mutex_init_value(&encoder->outputs_mutex);
 	pthread_mutex_init_value(&encoder->pause.mutex);
 
-	if (pthread_mutexattr_init(&attr) != 0)
-		return false;
-	if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE) != 0)
-		return false;
 	if (!obs_context_data_init(&encoder->context, OBS_OBJ_TYPE_ENCODER,
 				   settings, name, hotkey_data, false))
 		return false;
-	if (pthread_mutex_init(&encoder->init_mutex, &attr) != 0)
+	if (pthread_mutex_init_recursive(&encoder->init_mutex) != 0)
 		return false;
-	if (pthread_mutex_init(&encoder->callbacks_mutex, &attr) != 0)
+	if (pthread_mutex_init_recursive(&encoder->callbacks_mutex) != 0)
 		return false;
 	if (pthread_mutex_init(&encoder->outputs_mutex, NULL) != 0)
 		return false;
@@ -110,9 +107,8 @@ create_encoder(const char *id, enum obs_encoder_type type, const char *name,
 		return NULL;
 	}
 
-	encoder->control = bzalloc(sizeof(obs_weak_encoder_t));
-	encoder->control->encoder = encoder;
-
+	obs_context_init_control(&encoder->context, encoder,
+				 (obs_destroy_cb)obs_encoder_destroy);
 	obs_context_data_insert(&encoder->context, &obs->data.encoders_mutex,
 				&obs->data.first_encoder);
 
@@ -179,20 +175,13 @@ static inline void get_video_info(struct obs_encoder *encoder,
 		obs_encoder_set_scaled_size(encoder, info->width, info->height);
 }
 
-static inline bool has_scaling(const struct obs_encoder *encoder)
-{
-	uint32_t video_width = video_output_get_width(encoder->media);
-	uint32_t video_height = video_output_get_height(encoder->media);
-
-	return encoder->scaled_width && encoder->scaled_height &&
-	       (video_width != encoder->scaled_width ||
-		video_height != encoder->scaled_height);
-}
-
 static inline bool gpu_encode_available(const struct obs_encoder *encoder)
 {
+	struct obs_core_video_mix *video = get_mix_for_video(encoder->media);
+	if (!video)
+		return false;
 	return (encoder->info.caps & OBS_ENCODER_CAP_PASS_TEXTURE) != 0 &&
-	       obs->video.using_nv12_tex;
+	       (video->using_p010_tex || video->using_nv12_tex);
 }
 
 static void add_connection(struct obs_encoder *encoder)
@@ -256,7 +245,9 @@ static void obs_encoder_actually_destroy(obs_encoder_t *encoder)
 		pthread_mutex_lock(&encoder->outputs_mutex);
 		for (size_t i = 0; i < encoder->outputs.num; i++) {
 			struct obs_output *output = encoder->outputs.array[i];
-			obs_output_remove_encoder(output, encoder);
+			// This happens while the output is still "active", so
+			// remove without checking active
+			obs_output_remove_encoder_internal(output, encoder);
 		}
 		da_free(encoder->outputs);
 		pthread_mutex_unlock(&encoder->outputs_mutex);
@@ -276,6 +267,8 @@ static void obs_encoder_actually_destroy(obs_encoder_t *encoder)
 		obs_context_data_free(&encoder->context);
 		if (encoder->owns_info_id)
 			bfree((void *)encoder->info.id);
+		if (encoder->last_error_message)
+			bfree(encoder->last_error_message);
 		bfree(encoder);
 	}
 }
@@ -394,9 +387,12 @@ void obs_encoder_update(obs_encoder_t *encoder, obs_data_t *settings)
 
 	obs_data_apply(encoder->context.settings, settings);
 
-	if (encoder->info.update && encoder->context.data)
-		encoder->info.update(encoder->context.data,
-				     encoder->context.settings);
+	// Note, we don't actually apply the changes to the encoder here
+	// as it may be active in another thread. Setting this to true
+	// makes the changes apply at the next possible moment in the
+	// encoder / GPU encoder thread.
+	if (encoder->info.update)
+		encoder->reconfigure_requested = true;
 }
 
 bool obs_encoder_get_extra_data(const obs_encoder_t *encoder,
@@ -449,6 +445,13 @@ static THREAD_LOCAL bool can_reroute = false;
 
 static inline bool obs_encoder_initialize_internal(obs_encoder_t *encoder)
 {
+	if (!encoder->media) {
+		blog(LOG_ERROR,
+		     "obs_encoder_initialize_internal: encoder '%s' has no media set",
+		     encoder->context.name);
+		return false;
+	}
+
 	if (encoder_active(encoder))
 		return true;
 	if (encoder->initialized)
@@ -521,6 +524,7 @@ void obs_encoder_shutdown(obs_encoder_t *encoder)
 		encoder->offset_usec = 0;
 		encoder->start_ts = 0;
 	}
+	obs_encoder_set_last_error(encoder, NULL);
 	pthread_mutex_unlock(&encoder->init_mutex);
 }
 
@@ -557,7 +561,7 @@ static inline void obs_encoder_start_internal(
 	struct encoder_callback cb = {false, new_packet, param};
 	bool first = false;
 
-	if (!encoder->context.data)
+	if (!encoder->context.data || !encoder->media)
 		return;
 
 	pthread_mutex_lock(&encoder->callbacks_mutex);
@@ -694,6 +698,14 @@ void obs_encoder_set_scaled_size(obs_encoder_t *encoder, uint32_t width,
 	encoder->scaled_height = height;
 }
 
+bool obs_encoder_scaling_enabled(const obs_encoder_t *encoder)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_scaling_enabled"))
+		return false;
+
+	return encoder->scaled_width || encoder->scaled_height;
+}
+
 uint32_t obs_encoder_get_width(const obs_encoder_t *encoder)
 {
 	if (!obs_encoder_valid(encoder, "obs_encoder_get_width"))
@@ -751,6 +763,21 @@ uint32_t obs_encoder_get_sample_rate(const obs_encoder_t *encoder)
 		       : audio_output_get_sample_rate(encoder->media);
 }
 
+size_t obs_encoder_get_frame_size(const obs_encoder_t *encoder)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_get_frame_size"))
+		return 0;
+	if (encoder->info.type != OBS_ENCODER_AUDIO) {
+		blog(LOG_WARNING,
+		     "obs_encoder_get_frame_size: "
+		     "encoder '%s' is not an audio encoder",
+		     obs_encoder_get_name(encoder));
+		return 0;
+	}
+
+	return encoder->framesize;
+}
+
 void obs_encoder_set_video(obs_encoder_t *encoder, video_t *video)
 {
 	const struct video_output_info *voi;
@@ -764,14 +791,24 @@ void obs_encoder_set_video(obs_encoder_t *encoder, video_t *video)
 		     obs_encoder_get_name(encoder));
 		return;
 	}
-	if (!video)
+	if (encoder_active(encoder)) {
+		blog(LOG_WARNING,
+		     "encoder '%s': Cannot apply a new video_t "
+		     "object while the encoder is active",
+		     obs_encoder_get_name(encoder));
 		return;
+	}
 
-	voi = video_output_get_info(video);
-
-	encoder->media = video;
-	encoder->timebase_num = voi->fps_den;
-	encoder->timebase_den = voi->fps_num;
+	if (video) {
+		voi = video_output_get_info(video);
+		encoder->media = video;
+		encoder->timebase_num = voi->fps_den;
+		encoder->timebase_den = voi->fps_num;
+	} else {
+		encoder->media = NULL;
+		encoder->timebase_num = 0;
+		encoder->timebase_den = 0;
+	}
 }
 
 void obs_encoder_set_audio(obs_encoder_t *encoder, audio_t *audio)
@@ -785,12 +822,23 @@ void obs_encoder_set_audio(obs_encoder_t *encoder, audio_t *audio)
 		     obs_encoder_get_name(encoder));
 		return;
 	}
-	if (!audio)
+	if (encoder_active(encoder)) {
+		blog(LOG_WARNING,
+		     "encoder '%s': Cannot apply a new audio_t "
+		     "object while the encoder is active",
+		     obs_encoder_get_name(encoder));
 		return;
+	}
 
-	encoder->media = audio;
-	encoder->timebase_num = 1;
-	encoder->timebase_den = audio_output_get_sample_rate(audio);
+	if (audio) {
+		encoder->media = audio;
+		encoder->timebase_num = 1;
+		encoder->timebase_den = audio_output_get_sample_rate(audio);
+	} else {
+		encoder->media = NULL;
+		encoder->timebase_num = 0;
+		encoder->timebase_den = 0;
+	}
 }
 
 video_t *obs_encoder_video(const obs_encoder_t *encoder)
@@ -873,15 +921,18 @@ static void send_first_video_packet(struct obs_encoder *encoder,
 	da_free(data);
 }
 
+static const char *send_packet_name = "send_packet";
 static inline void send_packet(struct obs_encoder *encoder,
 			       struct encoder_callback *cb,
 			       struct encoder_packet *packet)
 {
+	profile_start(send_packet_name);
 	/* include SEI in first video packet */
 	if (encoder->info.type == OBS_ENCODER_VIDEO && !cb->sent_first_packet)
 		send_first_video_packet(encoder, cb, packet);
 	else
 		cb->new_packet(cb->param, packet);
+	profile_end(send_packet_name);
 }
 
 void full_stop(struct obs_encoder *encoder)
@@ -957,6 +1008,12 @@ bool do_encode(struct obs_encoder *encoder, struct encoder_frame *frame)
 	struct encoder_packet pkt = {0};
 	bool received = false;
 	bool success;
+
+	if (encoder->reconfigure_requested) {
+		encoder->reconfigure_requested = false;
+		encoder->info.update(encoder->context.data,
+				     encoder->context.settings);
+	}
 
 	pkt.timebase_num = encoder->timebase_num;
 	pkt.timebase_den = encoder->timebase_den;
@@ -1052,21 +1109,22 @@ static inline void push_back_audio(struct obs_encoder *encoder,
 				   struct audio_data *data, size_t size,
 				   size_t offset_size)
 {
+	if (offset_size >= size)
+		return;
+
 	size -= offset_size;
 
 	/* push in to the circular buffer */
-	if (size)
-		for (size_t i = 0; i < encoder->planes; i++)
-			circlebuf_push_back(&encoder->audio_input_buffer[i],
-					    data->data[i] + offset_size, size);
+	for (size_t i = 0; i < encoder->planes; i++)
+		circlebuf_push_back(&encoder->audio_input_buffer[i],
+				    data->data[i] + offset_size, size);
 }
 
 static inline size_t calc_offset_size(struct obs_encoder *encoder,
 				      uint64_t v_start_ts, uint64_t a_start_ts)
 {
 	uint64_t offset = v_start_ts - a_start_ts;
-	offset = (uint64_t)offset * (uint64_t)encoder->samplerate /
-		 1000000000ULL;
+	offset = util_mul_div64(offset, encoder->samplerate, 1000000000ULL);
 	return (size_t)offset * encoder->blocksize;
 }
 
@@ -1113,8 +1171,8 @@ static bool buffer_audio(struct obs_encoder *encoder, struct audio_data *data)
 
 		/* audio starting point still not synced with video starting
 		 * point, so don't start audio */
-		end_ts += (uint64_t)data->frames * 1000000000ULL /
-			  (uint64_t)encoder->samplerate;
+		end_ts += util_mul_div64(data->frames, 1000000000ULL,
+					 encoder->samplerate);
 		if (end_ts <= v_start_ts) {
 			success = false;
 			goto fail;
@@ -1278,7 +1336,7 @@ end:
 void obs_encoder_add_output(struct obs_encoder *encoder,
 			    struct obs_output *output)
 {
-	if (!encoder)
+	if (!encoder || !output)
 		return;
 
 	pthread_mutex_lock(&encoder->outputs_mutex);
@@ -1289,7 +1347,7 @@ void obs_encoder_add_output(struct obs_encoder *encoder,
 void obs_encoder_remove_output(struct obs_encoder *encoder,
 			       struct obs_output *output)
 {
-	if (!encoder)
+	if (!encoder || !output)
 		return;
 
 	pthread_mutex_lock(&encoder->outputs_mutex);
@@ -1309,12 +1367,14 @@ void obs_encoder_packet_create_instance(struct encoder_packet *dst,
 	memcpy(dst->data, src->data, src->size);
 }
 
+/* OBS_DEPRECATED */
 void obs_duplicate_encoder_packet(struct encoder_packet *dst,
 				  const struct encoder_packet *src)
 {
 	obs_encoder_packet_create_instance(dst, src);
 }
 
+/* OBS_DEPRECATED */
 void obs_free_encoder_packet(struct encoder_packet *packet)
 {
 	obs_encoder_packet_release(packet);
@@ -1371,7 +1431,7 @@ void obs_encoder_addref(obs_encoder_t *encoder)
 	if (!encoder)
 		return;
 
-	obs_ref_addref(&encoder->control->ref);
+	obs_ref_addref(&encoder->context.control->ref);
 }
 
 void obs_encoder_release(obs_encoder_t *encoder)
@@ -1379,7 +1439,7 @@ void obs_encoder_release(obs_encoder_t *encoder)
 	if (!encoder)
 		return;
 
-	obs_weak_encoder_t *control = encoder->control;
+	obs_weak_encoder_t *control = get_weak(encoder);
 	if (obs_ref_release(&control->ref)) {
 		// The order of operations is important here since
 		// get_context_by_name in obs.c relies on weak refs
@@ -1411,7 +1471,7 @@ obs_encoder_t *obs_encoder_get_ref(obs_encoder_t *encoder)
 	if (!encoder)
 		return NULL;
 
-	return obs_weak_encoder_get_encoder(encoder->control);
+	return obs_weak_encoder_get_encoder(get_weak(encoder));
 }
 
 obs_weak_encoder_t *obs_encoder_get_weak_encoder(obs_encoder_t *encoder)
@@ -1419,7 +1479,7 @@ obs_weak_encoder_t *obs_encoder_get_weak_encoder(obs_encoder_t *encoder)
 	if (!encoder)
 		return NULL;
 
-	obs_weak_encoder_t *weak = encoder->control;
+	obs_weak_encoder_t *weak = get_weak(encoder);
 	obs_weak_encoder_addref(weak);
 	return weak;
 }
@@ -1473,4 +1533,31 @@ bool obs_encoder_paused(const obs_encoder_t *encoder)
 	return obs_encoder_valid(encoder, "obs_encoder_paused")
 		       ? os_atomic_load_bool(&encoder->paused)
 		       : false;
+}
+
+const char *obs_encoder_get_last_error(obs_encoder_t *encoder)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_get_last_error"))
+		return NULL;
+
+	return encoder->last_error_message;
+}
+
+void obs_encoder_set_last_error(obs_encoder_t *encoder, const char *message)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_set_last_error"))
+		return;
+
+	if (encoder->last_error_message)
+		bfree(encoder->last_error_message);
+
+	if (message)
+		encoder->last_error_message = bstrdup(message);
+	else
+		encoder->last_error_message = NULL;
+}
+
+uint64_t obs_encoder_get_pause_offset(const obs_encoder_t *encoder)
+{
+	return encoder ? encoder->pause.ts_offset : 0;
 }

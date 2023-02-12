@@ -8,7 +8,8 @@
 #include "decklink-device-discovery.hpp"
 #include "decklink-devices.hpp"
 
-#include "../../libobs/media-io/video-scaler.h"
+#include <media-io/video-scaler.h>
+#include <util/util_uint64.h>
 
 static void decklink_output_destroy(void *data)
 {
@@ -46,6 +47,9 @@ static bool decklink_output_start(void *data)
 		return false;
 	}
 
+	if (!decklink->deviceHash || !*decklink->deviceHash)
+		return false;
+
 	decklink->audio_samplerate = aoi.samples_per_sec;
 	decklink->audio_planes = 2;
 	decklink->audio_size =
@@ -57,24 +61,38 @@ static bool decklink_output_start(void *data)
 
 	device.Set(deviceEnum->FindByHash(decklink->deviceHash));
 
+	if (!device)
+		return false;
+
 	DeckLinkDeviceMode *mode = device->FindOutputMode(decklink->modeID);
+
+	struct obs_video_info ovi;
+	if (!obs_get_video_info(&ovi)) {
+		LOG(LOG_ERROR,
+		    "Start failed: could not retrieve obs_video_info!");
+		return false;
+	}
+
+	if (!mode->IsEqualFrameRate(ovi.fps_num, ovi.fps_den)) {
+		LOG(LOG_ERROR, "Start failed: FPS mismatch!");
+		return false;
+	}
 
 	decklink->SetSize(mode->GetWidth(), mode->GetHeight());
 
 	struct video_scale_info to = {};
-
-	if (decklink->keyerMode != 0) {
-		to.format = VIDEO_FORMAT_BGRA;
-	} else {
-		to.format = VIDEO_FORMAT_UYVY;
-	}
+	to.format = VIDEO_FORMAT_BGRA;
 	to.width = mode->GetWidth();
 	to.height = mode->GetHeight();
+	to.range = VIDEO_RANGE_FULL;
+	to.colorspace = VIDEO_CS_709;
 
 	obs_output_set_video_conversion(decklink->GetOutput(), &to);
 
 	device->SetKeyerMode(decklink->keyerMode);
-	decklink->Activate(device, decklink->modeID);
+
+	if (!decklink->Activate(device, decklink->modeID))
+		return false;
 
 	struct audio_convert_info conversion = {};
 	conversion.format = AUDIO_FORMAT_16BIT;
@@ -94,10 +112,6 @@ static void decklink_output_stop(void *data, uint64_t)
 	auto *decklink = (DeckLinkOutput *)data;
 
 	obs_output_end_data_capture(decklink->GetOutput());
-
-	ComPtr<DeckLinkDevice> device;
-
-	device.Set(deviceEnum->FindByHash(decklink->deviceHash));
 
 	decklink->Deactivate();
 }
@@ -119,8 +133,8 @@ static bool prepare_audio(DeckLinkOutput *decklink,
 	*output = *frame;
 
 	if (frame->timestamp < decklink->start_timestamp) {
-		uint64_t duration = (uint64_t)frame->frames * 1000000000 /
-				    (uint64_t)decklink->audio_samplerate;
+		uint64_t duration = util_mul_div64(frame->frames, 1000000000ULL,
+						   decklink->audio_samplerate);
 		uint64_t end_ts = frame->timestamp + duration;
 		uint64_t cutoff;
 
@@ -130,7 +144,8 @@ static bool prepare_audio(DeckLinkOutput *decklink,
 		cutoff = decklink->start_timestamp - frame->timestamp;
 		output->timestamp += cutoff;
 
-		cutoff *= (uint64_t)decklink->audio_samplerate / 1000000000;
+		cutoff = util_mul_div64(cutoff, decklink->audio_samplerate,
+					1000000000ULL);
 
 		for (size_t i = 0; i < decklink->audio_planes; i++)
 			output->data[i] +=
@@ -198,10 +213,17 @@ static bool decklink_output_device_changed(obs_properties_t *props,
 		const std::vector<DeckLinkDeviceMode *> &modes =
 			device->GetOutputModes();
 
-		for (DeckLinkDeviceMode *mode : modes) {
-			obs_property_list_add_int(modeList,
-						  mode->GetName().c_str(),
-						  mode->GetId());
+		struct obs_video_info ovi;
+		if (obs_get_video_info(&ovi)) {
+			for (DeckLinkDeviceMode *mode : modes) {
+				if (mode->IsEqualFrameRate(ovi.fps_num,
+							   ovi.fps_den)) {
+					obs_property_list_add_int(
+						modeList,
+						mode->GetName().c_str(),
+						mode->GetId());
+				}
+			}
 		}
 
 		obs_property_list_add_int(keyerList, "Disabled", 0);

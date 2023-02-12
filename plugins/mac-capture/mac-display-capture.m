@@ -3,6 +3,7 @@
 #include <util/threading.h>
 #include <pthread.h>
 
+#import <AvailabilityMacros.h>
 #import <CoreGraphics/CGDisplayStream.h>
 #import <Cocoa/Cocoa.h>
 
@@ -149,7 +150,6 @@ static inline void display_stream_update(struct display_capture *dc,
 					 CGDisplayStreamUpdateRef update_ref)
 {
 	UNUSED_PARAMETER(display_time);
-	UNUSED_PARAMETER(update_ref);
 
 	if (status == kCGDisplayStreamFrameStatusStopped) {
 		os_event_signal(dc->disp_finished);
@@ -190,7 +190,7 @@ static bool init_display_stream(struct display_capture *dc)
 	dc->frame = [dc->screen convertRectToBacking:dc->screen.frame];
 
 	NSNumber *screen_num = dc->screen.deviceDescription[@"NSScreenNumber"];
-	CGDirectDisplayID disp_id = (CGDirectDisplayID)screen_num.pointerValue;
+	CGDirectDisplayID disp_id = screen_num.unsignedIntValue;
 
 	NSDictionary *rect_dict =
 		CFBridgingRelease(CGRectCreateDictionaryRepresentation(
@@ -250,9 +250,6 @@ void load_crop(struct display_capture *dc, obs_data_t *settings);
 
 static void *display_capture_create(obs_data_t *settings, obs_source_t *source)
 {
-	UNUSED_PARAMETER(source);
-	UNUSED_PARAMETER(settings);
-
 	struct display_capture *dc = bzalloc(sizeof(struct display_capture));
 
 	dc->source = source;
@@ -399,13 +396,21 @@ static void display_capture_video_render(void *data, gs_effect_t *effect)
 	if (!dc->tex || (requires_window(dc->crop) && !dc->on_screen))
 		return;
 
+	const bool linear_srgb = gs_get_linear_srgb();
+
+	const bool previous = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(linear_srgb);
+
 	gs_vertexbuffer_flush(dc->vertbuf);
 	gs_load_vertexbuffer(dc->vertbuf);
 	gs_load_indexbuffer(NULL);
 	gs_load_samplerstate(dc->sampler, 0);
 	gs_technique_t *tech = gs_effect_get_technique(dc->effect, "Draw");
-	gs_effect_set_texture(gs_effect_get_param_by_name(dc->effect, "image"),
-			      dc->tex);
+	gs_eparam_t *param = gs_effect_get_param_by_name(dc->effect, "image");
+	if (linear_srgb)
+		gs_effect_set_texture_srgb(param, dc->tex);
+	else
+		gs_effect_set_texture(param, dc->tex);
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
 
@@ -413,6 +418,8 @@ static void display_capture_video_render(void *data, gs_effect_t *effect)
 
 	gs_technique_end_pass(tech);
 	gs_technique_end(tech);
+
+	gs_enable_framebuffer_srgb(previous);
 }
 
 static const char *display_capture_getname(void *unused)
@@ -420,10 +427,6 @@ static const char *display_capture_getname(void *unused)
 	UNUSED_PARAMETER(unused);
 	return obs_module_text("DisplayCapture");
 }
-
-#define CROPPED_LENGTH(rect, origin_, length)                       \
-	fabs((rect##.size.##length - dc->crop_rect.size.##length) - \
-	     (rect##.origin.##origin_ + dc->crop_rect.origin.##origin_))
 
 static uint32_t display_capture_getwidth(void *data)
 {
@@ -592,11 +595,29 @@ static obs_properties_t *display_capture_properties(void *unused)
 		props, "display", obs_module_text("DisplayCapture.Display"),
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 
-	for (unsigned i = 0; i < [NSScreen screens].count; i++) {
-		char buf[10];
-		sprintf(buf, "%u", i);
-		obs_property_list_add_int(list, buf, i);
-	}
+	[[NSScreen screens] enumerateObjectsUsingBlock:^(
+				    NSScreen *_Nonnull screen, NSUInteger index,
+				    BOOL *_Nonnull stop
+				    __attribute__((unused))) {
+		char dimension_buffer[4][12];
+		char name_buffer[256];
+		snprintf(dimension_buffer[0], sizeof(dimension_buffer[0]), "%u",
+			 (uint32_t)[screen frame].size.width);
+		snprintf(dimension_buffer[1], sizeof(dimension_buffer[0]), "%u",
+			 (uint32_t)[screen frame].size.height);
+		snprintf(dimension_buffer[2], sizeof(dimension_buffer[0]), "%d",
+			 (int32_t)[screen frame].origin.x);
+		snprintf(dimension_buffer[3], sizeof(dimension_buffer[0]), "%d",
+			 (int32_t)[screen frame].origin.y);
+
+		snprintf(name_buffer, sizeof(name_buffer),
+			 "%.200s: %.12sx%.12s @ %.12s,%.12s",
+			 [[screen localizedName] UTF8String],
+			 dimension_buffer[0], dimension_buffer[1],
+			 dimension_buffer[2], dimension_buffer[3]);
+
+		obs_property_list_add_int(list, name_buffer, index);
+	}];
 
 	obs_properties_add_bool(props, "show_cursor",
 				obs_module_text("DisplayCapture.ShowCursor"));
@@ -648,7 +669,7 @@ struct obs_source_info display_capture_info = {
 	.destroy = display_capture_destroy,
 
 	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			OBS_SOURCE_DO_NOT_DUPLICATE,
+			OBS_SOURCE_DO_NOT_DUPLICATE | OBS_SOURCE_SRGB,
 	.video_tick = display_capture_video_tick,
 	.video_render = display_capture_video_render,
 

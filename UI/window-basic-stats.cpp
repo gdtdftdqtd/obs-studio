@@ -6,46 +6,52 @@
 #include "obs-app.hpp"
 #include "qt-wrappers.hpp"
 
-#include <QDesktopWidget>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QScreen>
 
 #include <string>
 
 #define TIMER_INTERVAL 2000
 #define REC_TIME_LEFT_INTERVAL 30000
 
-static void setThemeID(QWidget *widget, const QString &themeID)
-{
-	if (widget->property("themeID").toString() != themeID) {
-		widget->setProperty("themeID", themeID);
-
-		/* force style sheet recalculation */
-		QString qss = widget->styleSheet();
-		widget->setStyleSheet("/* */");
-		widget->setStyleSheet(qss);
-	}
-}
-
 void OBSBasicStats::OBSFrontendEvent(enum obs_frontend_event event, void *ptr)
 {
 	OBSBasicStats *stats = reinterpret_cast<OBSBasicStats *>(ptr);
 
-	switch ((int)event) {
+	switch (event) {
 	case OBS_FRONTEND_EVENT_RECORDING_STARTED:
 		stats->StartRecTimeLeft();
 		break;
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
 		stats->ResetRecTimeLeft();
 		break;
+	default:
+		break;
 	}
 }
 
+static QString MakeTimeLeftText(int hours, int minutes)
+{
+	return QString::asprintf("%d %s, %d %s", hours,
+				 QT_TO_UTF8(QTStr("Hours")), minutes,
+				 QT_TO_UTF8(QTStr("Minutes")));
+}
+
+static QString MakeMissedFramesText(uint32_t total_lagged,
+				    uint32_t total_rendered, long double num)
+{
+	return QString("%1 / %2 (%3%)")
+		.arg(QString::number(total_lagged),
+		     QString::number(total_rendered),
+		     QString::number(num, 'f', 1));
+}
+
 OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
-	: QWidget(parent),
+	: QFrame(parent),
 	  cpu_info(os_cpu_usage_info_start()),
 	  timer(this),
 	  recTimeLeft(this)
@@ -77,6 +83,10 @@ OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
 	recordTimeLeft = new QLabel(this);
 	memUsage = new QLabel(this);
 
+	QString str = MakeTimeLeftText(99999, 59);
+	int textWidth = recordTimeLeft->fontMetrics().boundingRect(str).width();
+	recordTimeLeft->setMinimumWidth(textWidth);
+
 	newStat("CPUUsage", cpuUsage, 0);
 	newStat("HDDSpaceAvailable", hddSpace, 0);
 	newStat("DiskFullIn", recordTimeLeft, 0);
@@ -86,6 +96,11 @@ OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
 	renderTime = new QLabel(this);
 	skippedFrames = new QLabel(this);
 	missedFrames = new QLabel(this);
+
+	str = MakeMissedFramesText(999999, 999999, 99.99);
+	textWidth = missedFrames->fontMetrics().boundingRect(str).width();
+	missedFrames->setMinimumWidth(textWidth);
+
 	row = 0;
 
 	newStatBare("FPS", fps, 2);
@@ -157,7 +172,12 @@ OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
 	resize(800, 280);
 
 	setWindowTitle(QTStr("Basic.Stats"));
+#ifdef __APPLE__
+	setWindowIcon(
+		QIcon::fromTheme("obs", QIcon(":/res/images/obs_256x256.png")));
+#else
 	setWindowIcon(QIcon::fromTheme("obs", QIcon(":/res/images/obs.png")));
+#endif
 
 	setWindowModality(Qt::NonModal);
 	setAttribute(Qt::WA_DeleteOnClose, true);
@@ -186,7 +206,8 @@ OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
 
 		QRect windowGeometry = normalGeometry();
 		if (!WindowPositionValid(windowGeometry)) {
-			QRect rect = App()->desktop()->geometry();
+			QRect rect =
+				QGuiApplication::primaryScreen()->geometry();
 			setGeometry(QStyle::alignedRect(Qt::LeftToRight,
 							Qt::AlignCenter, size(),
 							rect));
@@ -194,6 +215,9 @@ OBSBasicStats::OBSBasicStats(QWidget *parent, bool closeable)
 	}
 
 	obs_frontend_add_event_callback(OBSFrontendEvent, this);
+
+	if (obs_frontend_recording_active())
+		StartRecTimeLeft();
 }
 
 void OBSBasicStats::closeEvent(QCloseEvent *event)
@@ -224,13 +248,6 @@ void OBSBasicStats::AddOutputLabels(QString name)
 	ol.droppedFrames = new QLabel(this);
 	ol.megabytesSent = new QLabel(this);
 	ol.bitrate = new QLabel(this);
-
-	int newPointSize = ol.status->font().pointSize();
-	newPointSize *= 13;
-	newPointSize /= 10;
-	QString qss =
-		QString("font-size: %1pt").arg(QString::number(newPointSize));
-	ol.status->setStyleSheet(qss);
 
 	int col = 0;
 	int row = outputLabels.size() + 1;
@@ -265,10 +282,8 @@ void OBSBasicStats::Update()
 	struct obs_video_info ovi = {};
 	obs_get_video_info(&ovi);
 
-	OBSOutput strOutput = obs_frontend_get_streaming_output();
-	OBSOutput recOutput = obs_frontend_get_recording_output();
-	obs_output_release(strOutput);
-	obs_output_release(recOutput);
+	OBSOutputAutoRelease strOutput = obs_frontend_get_streaming_output();
+	OBSOutputAutoRelease recOutput = obs_frontend_get_recording_output();
 
 	if (!strOutput && !recOutput)
 		return;
@@ -397,10 +412,7 @@ void OBSBasicStats::Update()
 		      : 0.0l;
 	num *= 100.0l;
 
-	str = QString("%1 / %2 (%3%)")
-		      .arg(QString::number(total_lagged),
-			   QString::number(total_rendered),
-			   QString::number(num, 'f', 1));
+	str = MakeMissedFramesText(total_lagged, total_rendered, num);
 	missedFrames->setText(str);
 
 	if (num > 5.0l)
@@ -424,22 +436,33 @@ void OBSBasicStats::Update()
 
 void OBSBasicStats::StartRecTimeLeft()
 {
+	if (recTimeLeft.isActive())
+		ResetRecTimeLeft();
+
 	recordTimeLeft->setText(QTStr("Calculating"));
 	recTimeLeft.start();
 }
 
 void OBSBasicStats::ResetRecTimeLeft()
 {
-	bitrates.clear();
-	recTimeLeft.stop();
-	recordTimeLeft->setText(QTStr(""));
+	if (recTimeLeft.isActive()) {
+		bitrates.clear();
+		recTimeLeft.stop();
+		recordTimeLeft->setText(QTStr(""));
+	}
 }
 
 void OBSBasicStats::RecordingTimeLeft()
 {
+	if (bitrates.empty())
+		return;
+
 	long double averageBitrate =
 		accumulate(bitrates.begin(), bitrates.end(), 0.0) /
 		(long double)bitrates.size();
+	if (averageBitrate == 0)
+		return;
+
 	long double bytesPerSec = (averageBitrate / 8.0l) * 1000.0l;
 	long double secondsUntilFull = (long double)num_bytes / bytesPerSec;
 
@@ -449,9 +472,7 @@ void OBSBasicStats::RecordingTimeLeft()
 	int minutes = totalMinutes % 60;
 	int hours = totalMinutes / 60;
 
-	QString text;
-	text.sprintf("%d %s, %d %s", hours, QT_TO_UTF8(QTStr("Hours")), minutes,
-		     QT_TO_UTF8(QTStr("Minutes")));
+	QString text = MakeTimeLeftText(hours, minutes);
 	recordTimeLeft->setText(text);
 	recordTimeLeft->setMinimumWidth(recordTimeLeft->width());
 }
@@ -465,10 +486,8 @@ void OBSBasicStats::Reset()
 	first_rendered = 0xFFFFFFFF;
 	first_lagged = 0xFFFFFFFF;
 
-	OBSOutput strOutput = obs_frontend_get_streaming_output();
-	OBSOutput recOutput = obs_frontend_get_recording_output();
-	obs_output_release(strOutput);
-	obs_output_release(recOutput);
+	OBSOutputAutoRelease strOutput = obs_frontend_get_streaming_output();
+	OBSOutputAutoRelease recOutput = obs_frontend_get_recording_output();
 
 	outputLabels[0].Reset(strOutput);
 	outputLabels[1].Reset(recOutput);

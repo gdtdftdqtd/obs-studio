@@ -106,7 +106,7 @@ static void write_meta_data(struct flv_output *stream)
 	uint8_t *meta_data;
 	size_t meta_data_size;
 
-	flv_meta_data(stream->output, &meta_data, &meta_data_size, true, 0);
+	flv_meta_data(stream->output, &meta_data, &meta_data_size, true);
 	fwrite(meta_data, 1, meta_data_size, stream->file);
 	bfree(meta_data);
 }
@@ -119,7 +119,8 @@ static void write_audio_header(struct flv_output *stream)
 	struct encoder_packet packet = {.type = OBS_ENCODER_AUDIO,
 					.timebase_den = 1};
 
-	obs_encoder_get_extra_data(aencoder, &packet.data, &packet.size);
+	if (!obs_encoder_get_extra_data(aencoder, &packet.data, &packet.size))
+		return;
 	write_packet(stream, &packet, true);
 }
 
@@ -133,7 +134,8 @@ static void write_video_header(struct flv_output *stream)
 	struct encoder_packet packet = {
 		.type = OBS_ENCODER_VIDEO, .timebase_den = 1, .keyframe = true};
 
-	obs_encoder_get_extra_data(vencoder, &header, &size);
+	if (!obs_encoder_get_extra_data(vencoder, &header, &size))
+		return;
 	packet.size = obs_parse_avc_header(&packet.data, header, size);
 	write_packet(stream, &packet, true);
 	bfree(packet.data);

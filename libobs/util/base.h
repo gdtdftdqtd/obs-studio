@@ -35,6 +35,8 @@ extern "C" {
 #define INT_CUR_LINE __LINE__
 #define FILE_LINE __FILE__ " (" S__LINE__ "): "
 
+#define OBS_COUNTOF(x) (sizeof(x) / sizeof(x[0]))
+
 enum {
 	/**
 	 * Use if there's a problem that can potentially affect the program,
@@ -85,6 +87,9 @@ EXPORT void blogva(int log_level, const char *format, va_list args);
 PRINTFATTR(2, 3)
 EXPORT void blog(int log_level, const char *format, ...);
 PRINTFATTR(1, 2)
+#ifndef SWIG
+OBS_NORETURN
+#endif
 EXPORT void bcrash(const char *format, ...);
 
 #undef PRINTFATTR

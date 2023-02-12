@@ -26,12 +26,10 @@
 
 #include "c99defs.h"
 
-#ifdef _MSC_VER
-#include "../../deps/w32-pthreads/pthread.h"
-#else
+#ifndef _MSC_VER
 #include <errno.h>
-#include <pthread.h>
 #endif
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +49,22 @@ static inline void pthread_mutex_init_value(pthread_mutex_t *mutex)
 		return;
 
 	*mutex = init_val;
+}
+
+static inline int pthread_mutex_init_recursive(pthread_mutex_t *mutex)
+{
+	pthread_mutexattr_t attr;
+	int ret = pthread_mutexattr_init(&attr);
+	if (ret == 0) {
+		ret = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+		if (ret == 0) {
+			ret = pthread_mutex_init(mutex, &attr);
+		}
+
+		pthread_mutexattr_destroy(&attr);
+	}
+
+	return ret;
 }
 
 enum os_event_type {

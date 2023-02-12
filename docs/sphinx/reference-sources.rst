@@ -23,13 +23,21 @@ dedicated header for implementing sources.
 Source Definition Structure (obs_source_info)
 ---------------------------------------------
 
-.. type:: struct obs_source_info
+.. struct:: obs_source_info
 
    Source definition structure.
 
 .. member:: const char *obs_source_info.id
 
    Unique string identifier for the source (required).
+
+.. member:: uint32_t version
+
+   Source version (optional).
+
+   This is used when a source's implementation is significantly
+   modified and the previous version is deprecated, but is kept to
+   prevent old sources from breaking.
 
 .. member:: enum obs_source_type obs_source_info.type
 
@@ -48,13 +56,13 @@ Source Definition Structure (obs_source_info)
    A bitwise OR combination of one or more of the following values:
 
    - **OBS_SOURCE_VIDEO** - Source has video
-  
+
      Unless SOURCE_ASYNC_VIDEO is specified, the source must include the
      :c:member:`obs_source_info.video_render` callback in the source
      definition structure.
 
    - **OBS_SOURCE_AUDIO** - Source has audio
-  
+
      Use the :c:func:`obs_source_output_audio()` function to pass raw
      audio data, which will be automatically converted and uploaded.  If
      used with OBS_SOURCE_ASYNC_VIDEO, audio will automatically be
@@ -69,7 +77,7 @@ Source Definition Structure (obs_source_info)
      Use the :c:func:`obs_source_output_video()` function to pass raw
      video data, which will be automatically drawn at a timing relative
      to the provided timestamp.
-     
+
      If audio is also present on the source, the audio will
      automatically be synced to the video based upon their mutual
      timestamps.
@@ -108,7 +116,7 @@ Source Definition Structure (obs_source_info)
      When used, specifies that the source composites one or more child
      sources.  Scenes and transitions are examples of sources that
      contain and render child sources.
-     
+
      Sources that render sub-sources must implement the audio_render
      callback in order to perform custom audio mixing of child sources.
 
@@ -142,6 +150,32 @@ Source Definition Structure (obs_source_info)
      from creating an audio feedback loop.  This is primarily only used
      with desktop audio capture sources.
 
+   - **OBS_SOURCE_CAP_DISABLED** - This source type has been disabled
+     and should not be shown as a type of source the user can add.
+
+   - **OBS_SOURCE_CAP_OBSOLETE** - This source type is obsolete and
+     should not be shown as a type of source the user can add.
+     Identical to *OBS_SOURCE_CAP_DISABLED*.  Meant to be used when a
+     source has changed in some way (mostly defaults/properties), but
+     you want to avoid breaking older configurations.  Basically solves
+     the problem of "I want to change the defaults of a source but I
+     don't want to break people's configurations"
+
+   - **OBS_SOURCE_CONTROLLABLE_MEDIA** - This source has media that can
+     be controlled
+
+   - **OBS_SOURCE_MONITOR_BY_DEFAULT** - Source should enable
+     monitoring by default.  Monitoring should be set by the
+     frontend if this flag is set.
+
+   - **OBS_SOURCE_CEA_708** - Source type provides cea708 data
+
+   - **OBS_SOURCE_SRGB** - Source understands SRGB rendering
+
+   - **OBS_SOURCE_CAP_DONT_SHOW_PROPERTIES** - Source type prefers not
+     to have its properties shown on creation (prefers to rely on
+     defaults first)
+
 .. member:: const char *(*obs_source_info.get_name)(void *type_data)
 
    Get the translated name of the source type.
@@ -165,7 +199,7 @@ Source Definition Structure (obs_source_info)
    from destroy.
 
 .. member:: uint32_t (*obs_source_info.get_width)(void *data)
-	    uint32_t (*obs_source_info.get_height)(void *data);
+            uint32_t (*obs_source_info.get_height)(void *data)
 
    Returns the width/height of the source.  These callbacks are required
    if this is a video source and is synchronous.
@@ -412,6 +446,87 @@ Source Definition Structure (obs_source_info)
 
    (Optional)
 
+.. member:: enum obs_icon_type obs_source_info.icon_type
+
+   Icon used for the source.
+
+   - **OBS_ICON_TYPE_UNKNOWN**         - Unknown
+   - **OBS_ICON_TYPE_IMAGE**           - Image
+   - **OBS_ICON_TYPE_COLOR**           - Color
+   - **OBS_ICON_TYPE_SLIDESHOW**       - Slideshow
+   - **OBS_ICON_TYPE_AUDIO_INPUT**     - Audio Input
+   - **OBS_ICON_TYPE_AUDIO_OUTPUT**    - Audio Output
+   - **OBS_ICON_TYPE_DESKTOP_CAPTURE** - Desktop Capture
+   - **OBS_ICON_TYPE_WINDOW_CAPTURE**  - Window Capture
+   - **OBS_ICON_TYPE_GAME_CAPTURE**    - Game Capture
+   - **OBS_ICON_TYPE_CAMERA**          - Camera
+   - **OBS_ICON_TYPE_TEXT**            - Text
+   - **OBS_ICON_TYPE_MEDIA**           - Media
+   - **OBS_ICON_TYPE_BROWSER**         - Browser
+   - **OBS_ICON_TYPE_CUSTOM**          - Custom (not implemented yet)
+
+.. member:: void (*obs_source_info.media_play_pause)(void *data, bool pause)
+
+   Called to pause or play media.
+
+.. member:: void (*obs_source_info.media_restart)(void *data)
+
+   Called to restart the media.
+
+.. member:: void (*obs_source_info.media_stop)(void *data)
+
+   Called to stop the media.
+
+.. member:: void (*obs_source_info.media_next)(void *data)
+
+   Called to go to the next media.
+
+.. member:: void (*obs_source_info.media_previous)(void *data)
+
+   Called to go to the previous media.
+
+.. member:: int64_t (*obs_source_info.media_get_duration)(void *data)
+
+   Called to get the media duration.
+
+.. member:: int64_t (*obs_source_info.media_get_time)(void *data)
+
+   Called to get the current time of the media.
+
+.. member:: void (*obs_source_info.media_set_time)(void *data, int64_t miliseconds)
+
+   Called to set the media time.
+
+.. member:: enum obs_media_state (*obs_source_info.media_get_state)(void *data)
+
+   Called to get the state of the media.
+
+   - **OBS_MEDIA_STATE_NONE**      - None
+   - **OBS_MEDIA_STATE_PLAYING**   - Playing
+   - **OBS_MEDIA_STATE_OPENING**   - Opening
+   - **OBS_MEDIA_STATE_BUFFERING** - Buffering
+   - **OBS_MEDIA_STATE_PAUSED**    - Paused
+   - **OBS_MEDIA_STATE_STOPPED**   - Stopped
+   - **OBS_MEDIA_STATE_ENDED**     - Ended
+   - **OBS_MEDIA_STATE_ERROR**     - Error
+
+.. member:: obs_missing_files_t *(*missing_files)(void *data)
+
+   Called to get the missing files of the source.
+
+.. member:: enum gs_color_space (*obs_source_info.video_get_color_space)(void *data, size_t count, const enum gs_color_space *preferred_spaces)
+
+   Returns the color space of the source. Assume GS_CS_SRGB if not
+   implemented.
+
+   There's an optimization an SDR source can do when rendering to HDR.
+   Check if the active space is GS_CS_709_EXTENDED, and return
+   GS_CS_709_EXTENDED instead of GS_CS_SRGB to avoid an redundant
+   conversion. This optimization can only be done if the pixel shader
+   outputs linear 709, which is why it's not performed by default.
+
+   :return: The color space of the video
+
 
 .. _source_signal_handler_reference:
 
@@ -427,6 +542,12 @@ Source Signals
 
    Called when the :c:func:`obs_source_remove()` function is called on
    the source.
+
+**update** (ptr source)
+
+   Called when the source's settings have been updated.
+
+   .. versionadded:: 29.0.0
 
 **save** (ptr source)
 
@@ -500,6 +621,10 @@ Source Signals
 
    Called when the audio sync offset has changed.
 
+**audio_balance** (ptr source, in out float balance)
+
+   Called when the audio balance has changed.
+
 **audio_mixers** (ptr source, in out int mixers)
 
    Called when the audio mixers have changed.
@@ -528,6 +653,37 @@ Source Signals
 
    Called when a transition has stopped.
 
+**media_started**
+
+   Called when media has started.
+
+**media_ended**
+
+   Called when media has ended.
+
+**media_pause**
+
+   Called when media has been paused.
+
+**media_play**
+
+   Called when media starts playing.
+
+**media_restart**
+
+   Called when the playing of media has been restarted.
+
+**media_stopped**
+
+   Called when the playing of media has been stopped.
+
+**media_next**
+
+   Called when the media source switches to the next media.
+
+**media_previous**
+
+   Called when the media source switches to the previous media.
 
 General Source Functions
 ------------------------
@@ -552,9 +708,9 @@ General Source Functions
 .. function:: obs_source_t *obs_source_create(const char *id, const char *name, obs_data_t *settings, obs_data_t *hotkey_data)
 
    Creates a source of the specified type with the specified settings.
-  
+
    The "source" context is used for anything related to presenting
-   or modifying video/audio.  Use obs_source_release to release it.
+   or modifying video/audio.  Use :c:func:`obs_source_release` to release it.
 
    :param   id:             The source type string identifier
    :param   name:           The desired name of the source.  If this is
@@ -594,7 +750,8 @@ General Source Functions
 
    Duplicates a source.  If the source has the
    OBS_SOURCE_DO_NOT_DUPLICATE output flag set, this only returns a
-   new reference to the same source.
+   new reference to the same source. Either way,
+   release with :c:func:`obs_source_release`.
 
    :param source:         The source to duplicate
    :param desired_name:   The desired name of the new source.  If this is
@@ -607,9 +764,24 @@ General Source Functions
 ---------------------
 
 .. function:: void obs_source_addref(obs_source_t *source)
-              void obs_source_release(obs_source_t *source)
 
-   Adds/releases a reference to a source.  When the last reference is
+   Adds a reference to a source.
+
+.. deprecated:: 27.2.0
+   Use :c:func:`obs_source_get_ref()` instead.
+
+---------------------
+
+.. function:: obs_source_t *obs_source_get_ref(obs_source_t *source)
+
+   Returns an incremented reference if still valid, otherwise returns
+   *NULL*. Use :c:func:`obs_source_release` to release it.
+
+---------------------
+
+.. function:: void obs_source_release(obs_source_t *source)
+
+   Releases a reference to a source.  When the last reference is
    released, the source is destroyed.
 
 ---------------------
@@ -641,6 +813,14 @@ General Source Functions
 .. function:: bool obs_source_removed(const obs_source_t *source)
 
    :return: *true* if the source should be released
+
+---------------------
+
+.. function:: bool obs_source_is_hidden(obs_source_t *source)
+              void obs_source_set_hidden(obs_source_t *source, bool hidden)
+
+   Gets/sets the hidden property that determines whether it should be hidden from the user.
+   Used when the source is still alive but should not be referenced.
 
 ---------------------
 
@@ -696,6 +876,13 @@ General Source Functions
 
 ---------------------
 
+.. function:: void obs_source_reset_settings(obs_source_t *source, obs_data_t *settings)
+
+   Same as :c:func:`obs_source_update`, but clears existing settings
+   first.
+
+---------------------
+
 .. function:: void obs_source_video_render(obs_source_t *source)
 
    Renders a video source.  This will call the
@@ -715,6 +902,26 @@ General Source Functions
    height.
 
    :return: The width or height of the source
+
+---------------------
+
+.. function:: enum gs_color_space obs_source_get_color_space(obs_source_t *source, size_t count, const enum gs_color_space *preferred_spaces)
+
+   Calls the :c:member:`obs_source_info.video_get_color_space` of the
+   source to get its color space. Assumes GS_CS_SRGB if not implemented.
+
+   Disabled filters are skipped, and async video sources can figure out
+   the color space for themselves.
+
+   :return: The color space of the source
+
+---------------------
+
+.. function:: bool obs_source_get_texcoords_centered(obs_source_t *source)
+
+   Hints whether or not the source will blend texels.
+
+   :return: Whether or not the source will blend texels
 
 ---------------------
 
@@ -749,15 +956,35 @@ General Source Functions
 
 ---------------------
 
+.. function:: bool obs_source_is_scene(const obs_source_t *source)
+
+   :return: *true* if the source is a scene
+
+---------------------
+
+.. function:: bool obs_source_is_group(const obs_source_t *source)
+
+   :return: *true* if the source is a group
+
+---------------------
+
 .. function:: const char *obs_source_get_id(const obs_source_t *source)
 
-   :return: The source's type identifier string
+   :return: The source's type identifier string. If the source is versioned,
+            "_vN" is appended at the end, where "N" is the source's version.
+
+ ---------------------
+
+.. function:: const char *obs_source_get_unversioned_id(const obs_source_t *source)
+
+   :return: The source's unversioned type identifier string.
 
 ---------------------
 
 .. function:: signal_handler_t *obs_source_get_signal_handler(const obs_source_t *source)
 
-   :return: The source's signal handler
+   :return: The source's signal handler. Should not be manually freed,
+            as its lifecycle is managed by libobs.
 
    See the :ref:`source_signal_handler_reference` for more information
    on signals that are available for sources.
@@ -766,7 +993,8 @@ General Source Functions
 
 .. function:: proc_handler_t *obs_source_get_proc_handler(const obs_source_t *source)
 
-   :return: The procedure handler for a source
+   :return: The procedure handler for a source. Should not be manually freed,
+            as its lifecycle is managed by libobs.
 
 ---------------------
 
@@ -781,6 +1009,64 @@ General Source Functions
               void obs_source_set_muted(obs_source_t *source, bool muted)
 
    Sets/gets whether the source's audio is muted.
+
+---------------------
+
+.. function:: enum speaker_layout obs_source_get_speaker_layout(obs_source_t *source)
+
+   Gets the current speaker layout.
+
+---------------------
+
+.. function:: void obs_source_set_balance_value(obs_source_t *source, float balance)
+              float obs_source_get_balance_value(const obs_source_t *source)
+
+   Sets/gets the audio balance value.
+
+---------------------
+
+.. function:: void obs_source_set_sync_offset(obs_source_t *source, int64_t offset)
+              int64_t obs_source_get_sync_offset(const obs_source_t *source)
+
+   Sets/gets the audio sync offset (in nanoseconds) for a source.
+
+---------------------
+
+.. function:: void obs_source_set_audio_mixers(obs_source_t *source, uint32_t mixers)
+              uint32_t obs_source_get_audio_mixers(const obs_source_t *source)
+
+   Sets/gets the audio mixer channels (i.e. audio tracks) that a source outputs to,
+   depending on what bits are set.  Audio mixers allow filtering
+   specific using multiple audio encoders to mix different sources
+   together depending on what mixer channel they're set to.
+
+   For example, to output to mixer 1 and 3, you would perform a bitwise
+   OR on bits 0 and 2:  (1<<0) | (1<<2), or 0x5.
+
+---------------------
+
+.. function:: void obs_source_set_monitoring_type(obs_source_t *source, enum obs_monitoring_type type)
+              enum obs_monitoring_type obs_source_get_monitoring_type(obs_source_t *source)
+
+   Sets/gets the desktop audio monitoring type.
+
+   :param order: | OBS_MONITORING_TYPE_NONE - Do not monitor
+                 | OBS_MONITORING_TYPE_MONITOR_ONLY - Send to monitor device, no outputs
+                 | OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT - Send to monitor device and outputs
+
+---------------------
+
+.. function:: void obs_source_enum_active_sources(obs_source_t *source, obs_source_enum_proc_t enum_callback, void *param)
+              void obs_source_enum_active_tree(obs_source_t *source, obs_source_enum_proc_t enum_callback, void *param)
+
+   Enumerates active child sources or source tree used by this source.
+
+   Relevant data types used with this function:
+
+.. code:: cpp
+
+   typedef void (*obs_source_enum_proc_t)(obs_source_t *parent,
+                   obs_source_t *child, void *param);
 
 ---------------------
 
@@ -809,27 +1095,6 @@ General Source Functions
               void obs_source_set_push_to_talk_delay(obs_source_t *source, uint64_t delay)
 
    Sets/gets the push-to-talk delay.
-
----------------------
-
-.. function:: void obs_source_set_sync_offset(obs_source_t *source, int64_t offset)
-              int64_t obs_source_get_sync_offset(const obs_source_t *source)
-
-   Sets/gets the audio sync offset (in nanoseconds) for a source.
-
----------------------
-
-.. function:: void obs_source_enum_active_sources(obs_source_t *source, obs_source_enum_proc_t enum_callback, void *param)
-              void obs_source_enum_active_tree(obs_source_t *source, obs_source_enum_proc_t enum_callback, void *param)
-
-   Enumerates active child sources or source tree used by this source.
-
-   Relevant data types used with this function:
-
-.. code:: cpp
-
-   typedef void (*obs_source_enum_proc_t)(obs_source_t *parent,
-                   obs_source_t *child, void *param);
 
 ---------------------
 
@@ -863,19 +1128,6 @@ General Source Functions
 
 ---------------------
 
-.. function:: void obs_source_set_audio_mixers(obs_source_t *source, uint32_t mixers)
-              uint32_t obs_source_get_audio_mixers(const obs_source_t *source)
-
-   Sets/gets the audio mixer channels that a source outputs to
-   (depending on what bits are set).  Audio mixers allow filtering
-   specific using multiple audio encoders to mix different sources
-   together depending on what mixer channel they're set to.
-
-   For example, to output to mixer 1 and 3, you would perform a bitwise
-   OR on bits 0 and 2:  (1<<0) | (1<<2), or 0x5.
-
----------------------
-
 .. function:: void obs_source_enum_filters(obs_source_t *source, obs_source_enum_proc_t callback, void *param)
 
    Enumerates active filters on a source.
@@ -901,6 +1153,27 @@ General Source Functions
    Copies filters from the source to the destination.  If filters by the
    same name already exist in the destination source, the newer filters
    will be given unique names.
+
+---------------------
+
+.. function:: void obs_source_copy_single_filter(obs_source_t *dst, obs_source_t *filter)
+
+   Copies the filter from the source to the destination. If a filter by the
+   same name already exists in the destination source, the newer filter
+   will be given a unique name.
+
+---------------------
+
+.. function:: size_t obs_source_filter_count(const obs_source_t *source)
+
+   Returns the number of filters the source has.
+
+---------------------
+
+.. function:: obs_data_array_t *obs_source_backup_filters(obs_source_t *source)
+              void obs_source_restore_filters(obs_source_t *source, obs_data_array_t *array)
+
+   Backs up and restores the current filter list and order.
 
 ---------------------
 
@@ -957,7 +1230,8 @@ General Source Functions
 .. function:: obs_data_t *obs_source_get_private_settings(obs_source_t *item)
 
    Gets private front-end settings data.  This data is saved/loaded
-   automatically.  Returns an incremented reference.
+   automatically.  Returns an incremented reference. Use :c:func:`obs_data_release()`
+   to release it.
 
 ---------------------
 
@@ -996,6 +1270,77 @@ General Source Functions
 
 ---------------------
 
+.. function:: enum obs_icon_type obs_source_get_icon_type(const char *id)
+
+   Calls the :c:member:`obs_source_info.icon_type` to get the icon type.
+
+---------------------
+
+.. function:: void obs_source_media_play_pause(obs_source_t *source, bool pause)
+
+   Calls the :c:member:`obs_source_info.media_play_pause` to pause or play media.
+
+---------------------
+
+.. function:: void obs_source_media_restart(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_restart` to restart the media.
+
+---------------------
+
+.. function:: void obs_source_media_stop(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_stop` to stop the media.
+
+---------------------
+
+.. function:: void obs_source_media_next(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_next` to go to the next media.
+
+---------------------
+
+.. function:: void obs_source_media_previous(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_previous` to go to the previous media.
+
+---------------------
+
+.. function:: int64_t obs_source_media_get_duration(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_get_duration` to
+   get the media duration in milliseconds.
+
+---------------------
+
+.. function:: int64_t obs_source_media_get_time(obs_source_t *source)
+              void obs_source_media_set_time(obs_source_t *source, int64_t ms)
+
+   Calls the :c:member:`obs_source_info.media_get_time` or
+   :c:member:`obs_source_info.media_set_time` to get/set the
+   current time (in milliseconds) of the media. Will return 0
+   for non-media sources.
+
+---------------------
+
+.. function:: enum obs_media_state obs_source_media_get_state(obs_source_t *source)
+
+   Calls the :c:member:`obs_source_info.media_get_state` to get the state of the media.
+
+---------------------
+
+.. function:: void obs_source_media_started(obs_source_t *source)
+
+   Emits a **media_started** signal.
+
+---------------------
+
+.. function:: void obs_source_media_ended(obs_source_t *source)
+
+   Emits a **media_ended** signal.
+
+---------------------
+
 
 Functions used by sources
 -------------------------
@@ -1004,7 +1349,7 @@ Functions used by sources
 
    Helper function to set the color matrix information when drawing the
    source.
-  
+
    :param  color_matrix:    The color matrix.  Assigns to the 'color_matrix'
                             effect variable.
    :param  color_range_min: The minimum color range.  Assigns to the
@@ -1019,7 +1364,7 @@ Functions used by sources
 .. function:: void obs_source_draw(gs_texture_t *image, int x, int y, uint32_t cx, uint32_t cy, bool flip)
 
    Helper function to draw sprites for a source (synchronous video).
-  
+
    :param  image:  The sprite texture to draw.  Assigns to the 'image' variable
                    of the current effect.
    :param  x:      X position of the sprite.
@@ -1040,24 +1385,46 @@ Functions used by sources
 
    enum video_format {
            VIDEO_FORMAT_NONE,
-   
-           /* planar 420 format */
+
+           /* planar 4:2:0 formats */
            VIDEO_FORMAT_I420, /* three-plane */
            VIDEO_FORMAT_NV12, /* two-plane, luma and packed chroma */
-   
-           /* packed 422 formats */
+
+           /* packed 4:2:2 formats */
            VIDEO_FORMAT_YVYU,
            VIDEO_FORMAT_YUY2, /* YUYV */
            VIDEO_FORMAT_UYVY,
-   
+
            /* packed uncompressed formats */
            VIDEO_FORMAT_RGBA,
            VIDEO_FORMAT_BGRA,
            VIDEO_FORMAT_BGRX,
            VIDEO_FORMAT_Y800, /* grayscale */
-   
+
            /* planar 4:4:4 */
            VIDEO_FORMAT_I444,
+
+           /* more packed uncompressed formats */
+           VIDEO_FORMAT_BGR3,
+
+           /* planar 4:2:2 */
+           VIDEO_FORMAT_I422,
+
+           /* planar 4:2:0 with alpha */
+           VIDEO_FORMAT_I40A,
+
+           /* planar 4:2:2 with alpha */
+           VIDEO_FORMAT_I42A,
+
+           /* planar 4:4:4 with alpha */
+           VIDEO_FORMAT_YUVA,
+
+           /* packed 4:4:4 with alpha */
+           VIDEO_FORMAT_AYUV,
+
+           /* planar 4:2:0 format, 10 bpp */
+           VIDEO_FORMAT_I010, /* three-plane */
+           VIDEO_FORMAT_P010, /* two-plane, luma and packed chroma */
    };
 
    struct obs_source_frame {
@@ -1066,14 +1433,25 @@ Functions used by sources
            uint32_t            width;
            uint32_t            height;
            uint64_t            timestamp;
-   
+
            enum video_format   format;
            float               color_matrix[16];
            bool                full_range;
+           uint16_t            max_luminance;
            float               color_range_min[3];
            float               color_range_max[3];
            bool                flip;
+           uint8_t             flags;
+           uint8_t             trc; /* enum video_trc */
    };
+
+---------------------
+
+.. function:: void obs_source_set_async_rotation(obs_source_t *source, long rotation)
+
+   Allows the ability to set rotation (0, 90, 180, -90, 270) for an
+   async video source.  The rotation will be automatically applied to
+   the source.
 
 ---------------------
 
@@ -1087,7 +1465,7 @@ Functions used by sources
 .. function:: void obs_source_show_preloaded_video(obs_source_t *source)
 
    Shows any preloaded video frame.
-   
+
 ---------------------
 
 .. function:: void obs_source_output_audio(obs_source_t *source, const struct obs_source_audio *audio)
@@ -1107,7 +1485,7 @@ Functions used by sources
    Adds an active child source.  Must be called by parent sources on child
    sources when the child is added and active.  This ensures that the source is
    properly activated if the parent is active.
-  
+
    :return: *true* if source can be added, *false* if it causes recursion
 
 ---------------------
@@ -1128,7 +1506,7 @@ Filters
 
    If the source is a filter, returns the parent source of the filter.
    The parent source is the source being filtered.
-   
+
    Only guaranteed to be valid inside of the video_render, filter_audio,
    filter_video, and filter_remove callbacks.
 
@@ -1138,7 +1516,7 @@ Filters
 
    If the source is a filter, returns the target source of the filter.
    The target source is the next source in the filter chain.
-   
+
    Only guaranteed to be valid inside of the video_render, filter_audio,
    filter_video, and filter_remove callbacks.
 
@@ -1179,10 +1557,20 @@ Functions used by filters
    Default RGB filter handler for generic effect filters.  Processes the
    filter chain and renders them to texture if needed, then the filter is
    drawn with.
-  
+
    After calling this, set your parameters for the effect, then call
    obs_source_process_filter_end to draw the filter.
-  
+
+   :return: *true* if filtering should continue, *false* if the filter
+            is bypassed for whatever reason
+
+---------------------
+
+.. function:: bool obs_source_process_filter_begin_with_color_space(obs_source_t *filter, enum gs_color_format format, enum gs_color_space space, enum obs_allow_direct_render allow_direct)
+
+   Similar to obs_source_process_filter_begin, but also set the active
+   color space.
+
    :return: *true* if filtering should continue, *false* if the filter
             is bypassed for whatever reason
 
@@ -1191,7 +1579,7 @@ Functions used by filters
 .. function:: void obs_source_process_filter_end(obs_source_t *filter, gs_effect_t *effect, uint32_t width, uint32_t height)
 
    Draws the filter using the effect's "Draw" technique.
-  
+
    Before calling this function, first call obs_source_process_filter_begin and
    then set the effect parameters, and then call this function to finalize the
    filter.
@@ -1201,7 +1589,7 @@ Functions used by filters
 .. function:: void obs_source_process_filter_tech_end(obs_source_t *filter, gs_effect_t *effect, uint32_t width, uint32_t height, const char *tech_name)
 
    Draws the filter with a specific technique in the effect.
-  
+
    Before calling this function, first call obs_source_process_filter_begin and
    then set the effect parameters, and then call this function to finalize the
    filter.
@@ -1225,7 +1613,8 @@ Transitions
    :param target: | OBS_TRANSITION_SOURCE_A - Source being transitioned from, or the current source if not transitioning
                   | OBS_TRANSITION_SOURCE_B - Source being transitioned to
    :return:       An incremented reference to the source or destination
-                  sources of the transition
+                  sources of the transition. Use :c:func:`obs_source_release`
+                  to release it.
 
 ---------------------
 
@@ -1238,7 +1627,7 @@ Transitions
 .. function:: obs_source_t *obs_transition_get_active_source(obs_source_t *transition)
 
    :return: An incremented reference to the currently active source of
-            the transition
+            the transition. Use :c:func:`obs_source_release` to release it.
 
 ---------------------
 
@@ -1296,7 +1685,7 @@ Functions used by transitions
               bool obs_transition_fixed(obs_source_t *transition)
 
    Sets/gets whether the transition uses a fixed duration.  Useful for
-   certain types of transitions such as stingers.  If this is set, the 
+   certain types of transitions such as stingers.  If this is set, the
    *duration_ms* parameter of :c:func:`obs_transition_start()` has no
    effect.
 
@@ -1309,6 +1698,7 @@ Functions used by transitions
 ---------------------
 
 .. function:: void obs_transition_video_render(obs_source_t *transition, obs_transition_video_render_callback_t callback)
+              void obs_transition_video_render2(obs_source_t *transition, obs_transition_video_render_callback_t callback, gs_texture_t *placeholder_texture)
 
    Helper function used for rendering transitions.  This function will
    render two distinct textures for source A and source B of the
@@ -1320,6 +1710,10 @@ Functions used by transitions
    (0.0f..1.0f), *cx* and *cy* are the current dimensions of the
    transition, and *data* is the implementation's private data.
 
+   The *placeholder_texture* parameter allows a callback to receive
+   a replacement that isn't the default transparent texture, including
+   NULL if the caller desires.
+
    Relevant data types used with this function:
 
 .. code:: cpp
@@ -1327,6 +1721,16 @@ Functions used by transitions
    typedef void (*obs_transition_video_render_callback_t)(void *data,
                    gs_texture_t *a, gs_texture_t *b, float t,
                    uint32_t cx, uint32_t cy);
+
+---------------------
+
+.. function:: enum gs_color_space obs_transition_video_get_color_space(obs_source_t *transition)
+
+   Figure out the color space that encompasses both child sources.
+
+   The wider space wins.
+
+   :return: The color space of the transition
 
 ---------------------
 
@@ -1352,7 +1756,7 @@ Functions used by transitions
    source, then call obs_transition_swap_end when complete.  This allows
    the ability to seamlessly swap two different transitions without it
    affecting the output.
-   
+
    For example, if a transition is assigned to output channel 0, you'd
    call obs_transition_swap_begin, then you'd call obs_set_output_source
    with the new transition, then call
@@ -1360,4 +1764,4 @@ Functions used by transitions
 
 .. ---------------------------------------------------------------------------
 
-.. _libobs/obs-source.h: https://github.com/jp9000/obs-studio/blob/master/libobs/obs-source.h
+.. _libobs/obs-source.h: https://github.com/obsproject/obs-studio/blob/master/libobs/obs-source.h

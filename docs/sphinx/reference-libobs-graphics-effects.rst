@@ -9,15 +9,15 @@ HLSL format.
 
    #include <graphics/graphics.h>
 
-.. type:: typedef struct gs_effect           gs_effect_t
+.. type:: struct gs_effect           gs_effect_t
 
    Effect object.
 
-.. type:: typedef struct gs_effect_technique gs_technique_t
+.. type:: struct gs_effect_technique gs_technique_t
 
    Technique object.
 
-.. type:: typedef struct gs_effect_param     gs_eparam_t
+.. type:: struct gs_effect_param     gs_eparam_t
 
    Effect parameter object.
 
@@ -331,6 +331,15 @@ HLSL format.
 .. function:: void gs_effect_set_texture(gs_eparam_t *param, gs_texture_t *val)
 
    Sets a texture parameter.
+
+   :param param: Effect parameter
+   :param val:   Texture
+
+---------------------
+
+.. function:: void gs_effect_set_texture_srgb(gs_eparam_t *param, gs_texture_t *val)
+
+   Sets a texture parameter using SRGB view if available.
 
    :param param: Effect parameter
    :param val:   Texture

@@ -11,9 +11,9 @@ using namespace json11;
 
 OBSAbout::OBSAbout(QWidget *parent) : QDialog(parent), ui(new Ui::OBSAbout)
 {
-	ui->setupUi(this);
-
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+	ui->setupUi(this);
 
 	QString bitness;
 	QString ver;
@@ -33,11 +33,16 @@ OBSAbout::OBSAbout(QWidget *parent) : QDialog(parent), ui(new Ui::OBSAbout)
 	ui->version->setText(ver + bitness);
 
 	ui->contribute->setText(QTStr("About.Contribute"));
-	ui->donate->setText(
-		"&nbsp;&nbsp;<a href='https://obsproject.com/donate'>" +
-		QTStr("About.Donate") + "</a>");
-	ui->donate->setTextInteractionFlags(Qt::TextBrowserInteraction);
-	ui->donate->setOpenExternalLinks(true);
+
+	if (steam) {
+		delete ui->donate;
+	} else {
+		ui->donate->setText(
+			"&nbsp;&nbsp;<a href='https://obsproject.com/contribute'>" +
+			QTStr("About.Donate") + "</a>");
+		ui->donate->setTextInteractionFlags(Qt::TextBrowserInteraction);
+		ui->donate->setOpenExternalLinks(true);
+	}
 
 	ui->getInvolved->setText(
 		"&nbsp;&nbsp;<a href='https://github.com/obsproject/obs-studio/blob/master/CONTRIBUTING.rst'>" +
@@ -131,7 +136,11 @@ void OBSAbout::ShowAuthors()
 	QString error = "Error! File could not be read.\n\n \
 		Go to: https://github.com/obsproject/obs-studio/blob/master/AUTHORS";
 
+#ifdef __APPLE__
+	if (!GetDataFilePath("AUTHORS", path)) {
+#else
 	if (!GetDataFilePath("authors/AUTHORS", path)) {
+#endif
 		ui->textBrowser->setPlainText(error);
 		return;
 	}

@@ -17,6 +17,8 @@
 
 #include "obs-internal.h"
 
+#define get_weak(service) ((obs_weak_service_t *)service->context.control)
+
 const struct obs_service_info *find_service(const char *id)
 {
 	size_t i;
@@ -61,9 +63,8 @@ static obs_service_t *obs_service_create_internal(const char *id,
 	if (!service->context.data)
 		blog(LOG_ERROR, "Failed to create service '%s'!", name);
 
-	service->control = bzalloc(sizeof(obs_weak_service_t));
-	service->control->service = service;
-
+	obs_context_init_control(&service->context, service,
+				 (obs_destroy_cb)obs_service_destroy);
 	obs_context_data_insert(&service->context, &obs->data.services_mutex,
 				&obs->data.first_service);
 
@@ -325,7 +326,7 @@ void obs_service_addref(obs_service_t *service)
 	if (!service)
 		return;
 
-	obs_ref_addref(&service->control->ref);
+	obs_ref_addref(&service->context.control->ref);
 }
 
 void obs_service_release(obs_service_t *service)
@@ -333,7 +334,7 @@ void obs_service_release(obs_service_t *service)
 	if (!service)
 		return;
 
-	obs_weak_service_t *control = service->control;
+	obs_weak_service_t *control = get_weak(service);
 	if (obs_ref_release(&control->ref)) {
 		// The order of operations is important here since
 		// get_context_by_name in obs.c relies on weak refs
@@ -365,7 +366,7 @@ obs_service_t *obs_service_get_ref(obs_service_t *service)
 	if (!service)
 		return NULL;
 
-	return obs_weak_service_get_service(service->control);
+	return obs_weak_service_get_service(get_weak(service));
 }
 
 obs_weak_service_t *obs_service_get_weak_service(obs_service_t *service)
@@ -373,7 +374,7 @@ obs_weak_service_t *obs_service_get_weak_service(obs_service_t *service)
 	if (!service)
 		return NULL;
 
-	obs_weak_service_t *weak = service->control;
+	obs_weak_service_t *weak = get_weak(service);
 	obs_weak_service_addref(weak);
 	return weak;
 }
@@ -416,5 +417,62 @@ const char *obs_service_get_output_type(const obs_service_t *service)
 
 	if (service->info.get_output_type)
 		return service->info.get_output_type(service->context.data);
+	return NULL;
+}
+
+void obs_service_get_supported_resolutions(
+	const obs_service_t *service,
+	struct obs_service_resolution **resolutions, size_t *count)
+{
+	if (!obs_service_valid(service, "obs_service_supported_resolutions"))
+		return;
+	if (!obs_ptr_valid(resolutions, "obs_service_supported_resolutions"))
+		return;
+	if (!obs_ptr_valid(count, "obs_service_supported_resolutions"))
+		return;
+
+	*resolutions = NULL;
+	*count = 0;
+
+	if (service->info.get_supported_resolutions)
+		service->info.get_supported_resolutions(service->context.data,
+							resolutions, count);
+}
+
+void obs_service_get_max_fps(const obs_service_t *service, int *fps)
+{
+	if (!obs_service_valid(service, "obs_service_get_max_fps"))
+		return;
+	if (!obs_ptr_valid(fps, "obs_service_get_max_fps"))
+		return;
+
+	*fps = 0;
+
+	if (service->info.get_max_fps)
+		service->info.get_max_fps(service->context.data, fps);
+}
+
+void obs_service_get_max_bitrate(const obs_service_t *service,
+				 int *video_bitrate, int *audio_bitrate)
+{
+	if (video_bitrate)
+		*video_bitrate = 0;
+	if (audio_bitrate)
+		*audio_bitrate = 0;
+
+	if (!obs_service_valid(service, "obs_service_get_max_bitrate"))
+		return;
+
+	if (service->info.get_max_bitrate)
+		service->info.get_max_bitrate(service->context.data,
+					      video_bitrate, audio_bitrate);
+}
+
+const char **
+obs_service_get_supported_video_codecs(const obs_service_t *service)
+{
+	if (service->info.get_supported_video_codecs)
+		return service->info.get_supported_video_codecs(
+			service->context.data);
 	return NULL;
 }

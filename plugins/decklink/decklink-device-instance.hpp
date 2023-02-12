@@ -4,16 +4,19 @@
 	blog(level, "%s: " message, "decklink", ##__VA_ARGS__)
 
 #include <obs-module.h>
+#include <media-io/video-scaler.h>
 #include "decklink-device.hpp"
-#include "../../libobs/media-io/video-scaler.h"
+#include "OBSVideoFrame.h"
 
 class AudioRepacker;
 class DecklinkBase;
 
 class DeckLinkDeviceInstance : public IDeckLinkInputCallback {
 protected:
+	ComPtr<IDeckLinkConfiguration> deckLinkConfiguration;
 	struct obs_source_frame2 currentFrame;
 	struct obs_source_audio currentPacket;
+	struct obs_source_cea_708 currentCaptions;
 	DecklinkBase *decklink = nullptr;
 	DeckLinkDevice *device = nullptr;
 	DeckLinkDeviceMode *mode = nullptr;
@@ -33,8 +36,10 @@ protected:
 	AudioRepacker *audioRepacker = nullptr;
 	speaker_layout channelFormat = SPEAKERS_STEREO;
 	bool swap;
+	bool allow10Bit;
 
-	IDeckLinkMutableVideoFrame *decklinkOutputFrame = nullptr;
+	OBSVideoFrame *convertFrame = nullptr;
+	ComPtr<IDeckLinkMutableVideoFrame> decklinkOutputFrame;
 
 	void FinalizeStream();
 	void SetupVideoFormat(DeckLinkDeviceMode *mode_);
@@ -82,7 +87,7 @@ public:
 
 	inline DeckLinkDeviceMode *GetMode() const { return mode; }
 
-	bool StartCapture(DeckLinkDeviceMode *mode,
+	bool StartCapture(DeckLinkDeviceMode *mode, bool allow10Bit,
 			  BMDVideoConnection bmdVideoConnection,
 			  BMDAudioConnection bmdAudioConnection);
 	bool StopCapture(void);
@@ -104,4 +109,6 @@ public:
 
 	void DisplayVideoFrame(video_data *frame);
 	void WriteAudio(audio_data *frames);
+	void HandleCaptionPacket(IDeckLinkAncillaryPacket *packet,
+				 const uint64_t timestamp);
 };

@@ -20,6 +20,7 @@
  *  http://www.gnu.org/copyleft/lgpl.html
  */
 
+#ifdef USE_HASHSWF
 #include "rtmp_sys.h"
 #include "log.h"
 #include "http.h"
@@ -76,9 +77,6 @@ typedef mbedtls_md_context_t *HMAC_CTX;
 #define HMAC_finish(ctx, dig, len)	HMAC_Final(&ctx, (unsigned char *)dig, &len);
 #define HMAC_close(ctx)	HMAC_CTX_cleanup(&ctx)
 #endif
-
-extern void RTMP_TLS_Init();
-extern TLS_CTX RTMP_TLS_ctx;
 
 #include <zlib.h>
 
@@ -154,12 +152,12 @@ HTTP_get(struct HTTP_ctx *http, const char *url, HTTP_read_callback *cb)
     if (sb.sb_socket == INVALID_SOCKET)
         return HTTPRES_LOST_CONNECTION;
     i =
-        sprintf(sb.sb_buf,
+        snprintf(sb.sb_buf, RTMP_BUFFER_CACHE_SIZE,
                 "GET %s HTTP/1.0\r\nUser-Agent: %s\r\nHost: %s\r\nReferer: %.*s\r\n",
                 path, AGENT, host, (int)(path - url + 1), url);
     if (http->date[0])
-        i += sprintf(sb.sb_buf + i, "If-Modified-Since: %s\r\n", http->date);
-    i += sprintf(sb.sb_buf + i, "\r\n");
+        i += snprintf(sb.sb_buf + i, RTMP_BUFFER_CACHE_SIZE, "If-Modified-Since: %s\r\n", http->date);
+    i += snprintf(sb.sb_buf + i, RTMP_BUFFER_CACHE_SIZE, "\r\n");
 
     if (connect
             (sb.sb_socket, (struct sockaddr *)&sa, sizeof(struct sockaddr)) < 0)
@@ -457,12 +455,12 @@ make_unix_time(char *s)
  * Weekday, DD-MMM-YYYY HH:MM:SS GMT
  */
 static void
-strtime(time_t * t, char *s)
+strtime(time_t * t, char *s, size_t size)
 {
     struct tm *tm;
 
     tm = gmtime((time_t *) t);
-    sprintf(s, "%s, %02d %s %d %02d:%02d:%02d GMT",
+    snprintf(s, size, "%s, %02d %s %d %02d:%02d:%02d GMT",
             days[tm->tm_wday], tm->tm_mday, monthtab[tm->tm_mon],
             tm->tm_year + 1900, tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
@@ -518,8 +516,9 @@ RTMP_HashSWF(const char *url, unsigned int *size, unsigned char *hash,
      * These fields must be present in this order. All fields
      * besides URL are fixed size.
      */
-    path = malloc(hpre.av_len + home.av_len + sizeof(DIRSEP ".swfinfo"));
-    sprintf(path, "%s%s" DIRSEP ".swfinfo", hpre.av_val, home.av_val);
+    size_t path_size = hpre.av_len + home.av_len + sizeof(DIRSEP ".swfinfo");
+    path = malloc(path_size);
+    snprintf(path, path_size, "%s%s" DIRSEP ".swfinfo", hpre.av_val, home.av_val);
 
     f = fopen(path, "r+");
     while (f)
@@ -653,7 +652,7 @@ RTMP_HashSWF(const char *url, unsigned int *size, unsigned char *hash,
 
             fprintf(f, "url: %.*s\n", i, url);
         }
-        strtime(&cnow, cctim);
+        strtime(&cnow, cctim, sizeof(cctim));
         fprintf(f, "ctim: %s\n", cctim);
 
         if (!in.first)
@@ -691,4 +690,5 @@ RTMP_HashSWF(const char *url, unsigned int *size, unsigned char *hash,
     (void)age;
     return -1;
 }
+#endif
 #endif

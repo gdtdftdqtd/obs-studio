@@ -23,7 +23,7 @@ for implementing outputs
 Output Definition Structure (obs_output_info)
 ---------------------------------------------
 
-.. type:: struct obs_output_info
+.. struct:: obs_output_info
 
    Output definition structure.
 
@@ -316,7 +316,7 @@ General Output Functions
 .. function:: obs_output_t *obs_output_create(const char *id, const char *name, obs_data_t *settings, obs_data_t *hotkey_data)
 
    Creates an output with the specified settings.
-  
+
    The "output" context is used for anything related to outputting the
    final video/audio mix (E.g. streaming or recording).  Use
    obs_output_release to release it.
@@ -334,9 +334,24 @@ General Output Functions
 ---------------------
 
 .. function:: void obs_output_addref(obs_output_t *output)
-              void obs_output_release(obs_output_t *output)
 
-   Adds/releases a reference to an output.  When the last reference is
+   Adds a reference to an output.
+
+.. deprecated:: 27.2.0
+   Use :c:func:`obs_output_get_ref()` instead.
+
+---------------------
+
+.. function:: obs_output_t *obs_output_get_ref(obs_output_t *output)
+
+   Returns an incremented reference if still valid, otherwise returns
+   *NULL*. Release with :c:func:`obs_output_release()`.
+
+---------------------
+
+.. function:: void obs_output_release(obs_output_t *output)
+
+   Releases a reference to an output.  When the last reference is
    released, the output is destroyed.
 
 ---------------------
@@ -358,9 +373,23 @@ General Output Functions
 
 ---------------------
 
+.. function:: bool obs_weak_output_references_output(obs_weak_output_t *weak, obs_output_t *output)
+
+   Compares a weak output reference with an output.
+
+   :return: Whether the weak output reference ties back to the specified output
+
+---------------------
+
 .. function:: const char *obs_output_get_name(const obs_output_t *output)
 
    :return: The name of the output
+
+---------------------
+
+.. function:: const char *obs_output_get_id(const obs_output_t *output)
+
+   :return: The output's type identifier string
 
 ---------------------
 
@@ -388,7 +417,7 @@ General Output Functions
 .. function:: void obs_output_set_delay(obs_output_t *output, uint32_t delay_sec, uint32_t flags)
 
    Sets the current output delay, in seconds (if the output supports delay)
-  
+
    If delay is currently active, it will set the delay value, but will not
    affect the current delay, it will only affect the next time the output is
    activated.
@@ -428,7 +457,8 @@ General Output Functions
 
 .. function:: obs_data_t *obs_output_defaults(const char *id)
 
-   :return: An incremented reference to the output's default settings
+   :return: An incremented reference to the output's default settings.
+            Release with :c:func:`obs_data_release()`.
 
 ---------------------
 
@@ -473,19 +503,22 @@ General Output Functions
 
 .. function:: obs_data_t *obs_output_get_settings(const obs_output_t *output)
 
-   :return: An incremented reference to the output's settings
+   :return: An incremented reference to the output's settings. Release with
+            :c:func:`obs_data_release()`.
 
 ---------------------
 
 .. function:: signal_handler_t *obs_output_get_signal_handler(const obs_output_t *output)
 
-   :return: The signal handler of the output
+   :return: The signal handler of the output. Should not be manually freed,
+            as its lifecycle is managed by libobs.
 
 ---------------------
 
 .. function:: proc_handler_t *obs_output_get_proc_handler(const obs_output_t *output)
 
-   :return: The procedure handler of the output
+   :return: The procedure handler of the output. Should not be manually freed,
+            as its lifecycle is managed by libobs.
 
 ---------------------
 
@@ -588,7 +621,7 @@ General Output Functions
 
    Sets the preferred scaled resolution for this output.  Set width and height
    to 0 to disable scaling.
-  
+
    If this output uses an encoder, it will call obs_encoder_set_scaled_size on
    the encoder before the stream is started.  If the encoder is already active,
    then this function will trigger a warning and do nothing.
@@ -599,6 +632,18 @@ General Output Functions
               uint32_t obs_output_get_height(const obs_output_t *output)
 
    :return: The width/height of the output
+
+---------------------
+
+.. function:: void obs_output_output_caption_text1(obs_output_t *output, const char *text)
+              void obs_output_output_caption_text2(obs_output_t *output, const char *text, double display_duration)
+
+   Outputs captions from the specified text input. *text1* is the same as
+   *text2*, except that the *display_duration* is hardcoded to 2.0 seconds.
+
+   *display_duration* represents the minimum quantity of time that a given
+   caption can be displayed for before moving onto the next caption in the
+   queue.
 
 ---------------------
 
@@ -662,38 +707,63 @@ Functions used by outputs
 
    enum video_format {
            VIDEO_FORMAT_NONE,
-   
-           /* planar 420 format */
+
+           /* planar 4:2:0 formats */
            VIDEO_FORMAT_I420, /* three-plane */
            VIDEO_FORMAT_NV12, /* two-plane, luma and packed chroma */
-   
-           /* packed 422 formats */
+
+           /* packed 4:2:2 formats */
            VIDEO_FORMAT_YVYU,
            VIDEO_FORMAT_YUY2, /* YUYV */
            VIDEO_FORMAT_UYVY,
-   
+
            /* packed uncompressed formats */
            VIDEO_FORMAT_RGBA,
            VIDEO_FORMAT_BGRA,
            VIDEO_FORMAT_BGRX,
            VIDEO_FORMAT_Y800, /* grayscale */
-   
+
            /* planar 4:4:4 */
            VIDEO_FORMAT_I444,
+
+           /* more packed uncompressed formats */
+           VIDEO_FORMAT_BGR3,
+
+           /* planar 4:2:2 */
+           VIDEO_FORMAT_I422,
+
+           /* planar 4:2:0 with alpha */
+           VIDEO_FORMAT_I40A,
+
+           /* planar 4:2:2 with alpha */
+           VIDEO_FORMAT_I42A,
+
+           /* planar 4:4:4 with alpha */
+           VIDEO_FORMAT_YUVA,
+
+           /* packed 4:4:4 with alpha */
+           VIDEO_FORMAT_AYUV,
+
+           /* planar 4:2:0 format, 10 bpp */
+           VIDEO_FORMAT_I010, /* three-plane */
+           VIDEO_FORMAT_P010, /* two-plane, luma and packed chroma */
    };
-   
+
    enum video_colorspace {
            VIDEO_CS_DEFAULT,
            VIDEO_CS_601,
            VIDEO_CS_709,
+           VIDEO_CS_SRGB,
+           VIDEO_CS_2100_PQ,
+           VIDEO_CS_2100_HLG,
    };
-   
+
    enum video_range_type {
            VIDEO_RANGE_DEFAULT,
            VIDEO_RANGE_PARTIAL,
            VIDEO_RANGE_FULL
    };
-   
+
    struct video_scale_info {
            enum video_format     format;
            uint32_t              width;
@@ -715,24 +785,24 @@ Functions used by outputs
 
    enum audio_format {
            AUDIO_FORMAT_UNKNOWN,
-   
+
            AUDIO_FORMAT_U8BIT,
            AUDIO_FORMAT_16BIT,
            AUDIO_FORMAT_32BIT,
            AUDIO_FORMAT_FLOAT,
-   
+
            AUDIO_FORMAT_U8BIT_PLANAR,
            AUDIO_FORMAT_16BIT_PLANAR,
            AUDIO_FORMAT_32BIT_PLANAR,
            AUDIO_FORMAT_FLOAT_PLANAR,
    };
-   
+
    enum speaker_layout {
            SPEAKERS_UNKNOWN,
            SPEAKERS_MONO,
            SPEAKERS_STEREO,
            SPEAKERS_2POINT1,
-           SPEAKERS_QUAD,
+           SPEAKERS_4POINT0,
            SPEAKERS_4POINT1,
            SPEAKERS_5POINT1,
            SPEAKERS_5POINT1_SURROUND,
@@ -740,7 +810,7 @@ Functions used by outputs
            SPEAKERS_7POINT1_SURROUND,
            SPEAKERS_SURROUND,
    };
-   
+
    struct audio_convert_info {
            uint32_t            samples_per_sec;
            enum audio_format   format;
@@ -837,4 +907,4 @@ Functions used by outputs
 
 .. ---------------------------------------------------------------------------
 
-.. _libobs/obs-output.h: https://github.com/jp9000/obs-studio/blob/master/libobs/obs-output.h
+.. _libobs/obs-output.h: https://github.com/obsproject/obs-studio/blob/master/libobs/obs-output.h

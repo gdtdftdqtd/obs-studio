@@ -38,44 +38,9 @@
 
 #include "apple/cfstring-utils.h"
 
-/* clock function selection taken from libc++ */
-static uint64_t ns_time_simple()
-{
-	return mach_absolute_time();
-}
-
-static double ns_time_compute_factor()
-{
-	mach_timebase_info_data_t info = {1, 1};
-	mach_timebase_info(&info);
-	return ((double)info.numer) / info.denom;
-}
-
-static uint64_t ns_time_full()
-{
-	static double factor = 0.;
-	if (factor == 0.)
-		factor = ns_time_compute_factor();
-	return (uint64_t)(mach_absolute_time() * factor);
-}
-
-typedef uint64_t (*time_func)();
-
-static time_func ns_time_select_func()
-{
-	mach_timebase_info_data_t info = {1, 1};
-	mach_timebase_info(&info);
-	if (info.denom == info.numer)
-		return ns_time_simple;
-	return ns_time_full;
-}
-
 uint64_t os_gettime_ns(void)
 {
-	static time_func f = NULL;
-	if (!f)
-		f = ns_time_select_func();
-	return f();
+	return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 }
 
 /* gets the location [domain mask]/Library/Application Support/[name] */
@@ -354,6 +319,21 @@ static int physical_cores = 0;
 static int logical_cores = 0;
 static bool core_count_initialized = false;
 
+bool os_get_emulation_status(void)
+{
+#ifdef __aarch64__
+	return false;
+#else
+	int rosettaTranslated = 0;
+	size_t size = sizeof(rosettaTranslated);
+	if (sysctlbyname("sysctl.proc_translated", &rosettaTranslated, &size,
+			 NULL, 0) == -1)
+		return false;
+
+	return rosettaTranslated == 1;
+#endif
+}
+
 static void os_get_cores_internal(void)
 {
 	if (core_count_initialized)
@@ -404,6 +384,28 @@ uint64_t os_get_sys_free_size(void)
 		return 0;
 
 	return vmstat.free_count * vm_page_size;
+}
+
+static uint64_t total_memory = 0;
+static bool total_memory_initialized = false;
+
+static void os_get_sys_total_size_internal()
+{
+	total_memory_initialized = true;
+
+	size_t size;
+	int ret;
+
+	size = sizeof(total_memory);
+	ret = sysctlbyname("hw.memsize", &total_memory, &size, NULL, 0);
+}
+
+uint64_t os_get_sys_total_size(void)
+{
+	if (!total_memory_initialized)
+		os_get_sys_total_size_internal();
+
+	return total_memory;
 }
 
 #ifndef MACH_TASK_BASIC_INFO

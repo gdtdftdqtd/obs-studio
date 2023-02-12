@@ -19,9 +19,8 @@ using namespace json11;
 
 /* ------------------------------------------------------------------------- */
 
-#define RESTREAM_AUTH_URL \
-	"https://obsproject.com/app-auth/restream?action=redirect"
-#define RESTREAM_TOKEN_URL "https://obsproject.com/app-auth/restream-token"
+#define RESTREAM_AUTH_URL OAUTH_BASE_URL "v1/restream/redirect"
+#define RESTREAM_TOKEN_URL OAUTH_BASE_URL "v1/restream/token"
 #define RESTREAM_STREAMKEY_URL "https://api.restream.io/v2/user/streamKey"
 #define RESTREAM_SCOPE_VERSION 1
 
@@ -58,8 +57,8 @@ try {
 
 	auto func = [&]() {
 		success = GetRemoteFile(RESTREAM_STREAMKEY_URL, output, error,
-					nullptr, "application/json", nullptr,
-					headers, nullptr, 5);
+					nullptr, "application/json", "",
+					nullptr, headers, nullptr, 5);
 	};
 
 	ExecThreadedWithoutBlocking(
@@ -142,7 +141,7 @@ void RestreamAuth::LoadUI()
 	chat->setWindowTitle(QTStr("Auth.Chat"));
 	chat->setAllowedAreas(Qt::AllDockWidgetAreas);
 
-	browser = cef->create_widget(nullptr, url, panel_cookies);
+	browser = cef->create_widget(chat.data(), url, panel_cookies);
 	chat->SetWidget(browser);
 
 	main->addDockWidget(Qt::RightDockWidgetArea, chat.data());
@@ -159,7 +158,7 @@ void RestreamAuth::LoadUI()
 	info->setWindowTitle(QTStr("Auth.StreamInfo"));
 	info->setAllowedAreas(Qt::AllDockWidgetAreas);
 
-	browser = cef->create_widget(nullptr, url, panel_cookies);
+	browser = cef->create_widget(info.data(), url, panel_cookies);
 	info->SetWidget(browser);
 
 	main->addDockWidget(Qt::LeftDockWidgetArea, info.data());
@@ -176,7 +175,7 @@ void RestreamAuth::LoadUI()
 	channels->setWindowTitle(QTStr("RestreamAuth.Channels"));
 	channels->setAllowedAreas(Qt::AllDockWidgetAreas);
 
-	browser = cef->create_widget(nullptr, url, panel_cookies);
+	browser = cef->create_widget(channels.data(), url, panel_cookies);
 	channels->SetWidget(browser);
 
 	main->addDockWidget(Qt::LeftDockWidgetArea, channels.data());
@@ -201,7 +200,9 @@ void RestreamAuth::LoadUI()
 			main->Config(), service(), "DockState");
 		QByteArray dockState =
 			QByteArray::fromBase64(QByteArray(dockStateStr));
-		main->restoreState(dockState);
+
+		if (main->isVisible() || !main->isMaximized())
+			main->restoreState(dockState);
 	}
 
 	uiLoaded = true;
@@ -225,7 +226,7 @@ bool RestreamAuth::RetryLogin()
 			QT_TO_UTF8(login.GetCode()), true);
 }
 
-std::shared_ptr<Auth> RestreamAuth::Login(QWidget *parent)
+std::shared_ptr<Auth> RestreamAuth::Login(QWidget *parent, const std::string &)
 {
 	OAuthLogin login(parent, RESTREAM_AUTH_URL, false);
 	cef->add_popup_whitelist_url("about:blank", &login);
